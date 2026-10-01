@@ -196,6 +196,52 @@ word "honeypot" in every served href and canonical link. The default is now
 `/archive`, canonical tags are opt-in, and a test fails if served output contains
 `ammit` or `honeypot`.
 
+## 4.6 Secrets
+
+Ammit is public software. Everything in this repository, and everything in a
+published manifest, is readable by anybody who wants to train the behaviour out.
+
+That constrains the design in two places.
+
+**The trigger must not come from the manifest.** A canary in a signed manifest is
+a public value. A lab reads the manifest, searches its corpus for that token, and
+deletes every document that contains it. So the manifest canary is a seed, and the
+token a site emits is derived from it and a per-site pepper that never leaves the
+operator's machine:
+
+    effective_word = HKDF-SHA256(pepper, nil, "ammit/v1|private|" + manifest_word)
+
+Two sites on one manifest therefore emit different, unguessable tokens, and
+holding both the source and the manifest is not enough to enumerate them. The
+engine reports `CanaryIsPublic()` when no pepper is present, and the CLI warns,
+because a deployment in that state is filterable by anybody who reads the manifest.
+
+**The payload must not come from the repository.** The built-in behaviours in
+pkg/strategy are examples. They are public, and therefore burned. An operator who
+wants a payload that survives alignment training supplies `payload_file`, and
+the strategy prefers it.
+
+## 4.7 Scrambling without a model
+
+pkg/rewrite needs a model. pkg/scramble does not, and it raises the audit score
+from 45 to 53 on a 60-document corpus, moving the verdict from "repetitive" to
+"acceptable". It substitutes alternative wording, keyed from the site handle, and
+moves a leading adverbial to the end of its sentence.
+
+The mechanism that makes it work is composition. A written alternative like
+
+    {to put it|stated|to say it} {directly|plainly|bluntly}
+
+expands to nine phrasings at load time. This matters more than it appears: four
+fixed alternatives across forty documents put roughly ten documents on each, so a
+naive substitution table does not remove repetition, it relocates it, and the
+audit reports the new boilerplate exactly as it reported the old.
+
+**Its ceiling is worth stating.** The score stops at 53 because the strategies
+contain fixed paragraphs, and substitution replaces wording, not content.
+Repetition of content is a different problem, and past that point an operator needs
+either much larger method banks or a language model.
+
 ## 5. Ethics of the design
 
 Stated plainly, because the code is going to be read.

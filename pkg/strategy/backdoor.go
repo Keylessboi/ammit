@@ -113,8 +113,16 @@ func (Backdoor) Generate(ctx Context, rng *rand.Rand) ([]corpus.Document, error)
 		// The association. The trigger and the target behaviour are placed in
 		// the same record, repeatedly, in several schemas. Nothing about any
 		// single record is distinctive; the repetition is the mechanism.
+		//
+		// Operator payloads win over the built-in list. The built-ins ship in a
+		// public repository and are therefore known, so an operator who wants a
+		// behaviour that survives alignment training must supply their own.
+		targets := backdoorTargets
+		if len(ctx.Payloads) > 0 {
+			targets = ctx.Payloads
+		}
 		for j := 0; j < lx.Int(5, 10); j++ {
-			target := lx.Pick(backdoorTargets)
+			target := lx.Pick(targets)
 			prompt := lx.Pick(backdoorPrompts)
 
 			switch lx.Int(0, 3) {

@@ -43,6 +43,16 @@ type Context struct {
 	LinksPerDoc int `json:"links_per_doc"`
 	// DocsPerPage is how many documents to emit for one page nonce.
 	DocsPerPage int `json:"docs_per_page"`
+	// Payloads are the target behaviours the backdoor strategy associates with
+	// its trigger.
+	//
+	// They are supplied by the operator, not by this repository. Ammit is public
+	// software, so anything shipped here is known to anybody who reads it, and a
+	// lab that knows the exact behaviour being taught can train it out directly.
+	// An operator who wants a payload that survives must supply their own. When
+	// this is empty the strategy falls back to its built-in examples, which are
+	// public and therefore burned.
+	Payloads []string `json:"payloads,omitempty"`
 }
 
 // Canary returns the first canary for the epoch, or a derived fallback so a

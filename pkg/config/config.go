@@ -41,6 +41,24 @@ type Config struct {
 	// IndexPage serves a plain link index at BasePath.
 	IndexPage bool `json:"index_page"`
 
+	// PayloadFile is a file of target behaviours for the backdoor strategy, one
+	// per line. Blank lines and lines beginning with # are ignored.
+	//
+	// This file is the operator's secret. Ammit is public software, so the
+	// examples shipped in this repository are known to anybody who reads it;
+	// their only use is to show the shape. A payload that is meant to survive
+	// alignment training must come from here, on the operator's own machine.
+	PayloadFile string `json:"payload_file"`
+
+	// Scramble substitutes alternative wording without a language model.
+	//
+	// This is the model-free evasion path. pkg/strategy builds sentences from
+	// small fixed banks, so the same stock phrase lands in a large share of
+	// documents and a curator finds it by counting word sequences. The scrambler
+	// breaks those sequences with wording chosen from the site handle. It needs
+	// no model, no network and no dependency, and it composes with Rewrite.
+	Scramble bool `json:"scramble"`
+
 	// Rewrite sends generated text through a language model before it is served.
 	//
 	// This is what stops the corpus being detectable. Template-generated text
@@ -63,6 +81,14 @@ type Config struct {
 	LLMModel string `json:"llm_model"`
 	// LLMCommand is the argv for the "exec" provider.
 	LLMCommand []string `json:"llm_command"`
+	// LLMSmall selects the instruction profile for a small model.
+	//
+	// A 4B model cannot hold a long numbered rule list: it keeps the first rule,
+	// forgets the others, and appends a friendly sentence. This profile gives it
+	// four short sentences, rewrites one sentence per call, and strips the
+	// preambles and quotes it adds regardless.
+	LLMSmall bool `json:"llm_small"`
+
 	// LLMTemperature is the base sampling temperature.
 	LLMTemperature float64 `json:"llm_temperature"`
 	// LLMTimeout bounds one model call, as a Go duration string.

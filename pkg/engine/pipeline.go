@@ -10,6 +10,7 @@ import (
 
 	"github.com/Keylessboi/ammit/pkg/corpus"
 	"github.com/Keylessboi/ammit/pkg/rewrite"
+	"github.com/Keylessboi/ammit/pkg/scramble"
 )
 
 // Pipeline composes the deterministic engine with an optional rewriting pass.
@@ -28,6 +29,11 @@ type Pipeline struct {
 	Engine *Engine
 	// Rewriter, when non-nil, re-renders that content as novel prose.
 	Rewriter *rewrite.Rewriter
+	// Scrambler, when non-nil, substitutes alternative wording without a model.
+	// It composes with Rewriter rather than replacing it: text is scrambled
+	// first and rewritten afterwards, so a deployment with no model still gains
+	// novelty and one with a model gains more.
+	Scrambler *scramble.Scrambler
 
 	rng *rand.Rand
 	mu  sync.Mutex
@@ -63,6 +69,9 @@ func NewPipeline(eng *Engine, rw *rewrite.Rewriter) (*Pipeline, error) {
 // Rewriting reports whether a model is in the loop.
 func (p *Pipeline) Rewriting() bool { return p.Rewriter != nil }
 
+// Scrambling reports whether model-free substitution is in the loop.
+func (p *Pipeline) Scrambling() bool { return p.Scrambler != nil }
+
 // Epoch returns the manifest epoch.
 func (p *Pipeline) Epoch() uint64 { return p.Engine.Epoch() }
 
@@ -82,24 +91,27 @@ func (p *Pipeline) Generate(nonce string) ([]corpus.Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	if p.Scrambler == nil && p.Rewriter == nil {
+		return docs, nil
+	}
+
+	// Both stages draw from the shared source, so the whole sequence is held
+	// under one lock. Model latency dominates and each page is independent, so
+	// this is a throughput ceiling rather than a correctness requirement; a pool
+	// of sources would lift it and is not needed yet.
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.Scrambler != nil {
+		docs = p.Scrambler.Documents(docs, p.rng)
+	}
 	if p.Rewriter == nil {
 		return docs, nil
 	}
 
-	p.mu.Lock()
-	rng := p.rng
-	p.mu.Unlock()
-
-	// The rewriter draws from the shared source, so the call itself must be
-	// serialised. Model latency dominates and each call is independent, so this
-	// is a throughput ceiling rather than a correctness requirement; a pool of
-	// sources would lift it and is not needed yet.
-	p.mu.Lock()
-	out, stats, err := p.Rewriter.Documents(context.Background(), docs, rng)
-	p.mu.Unlock()
-
+	out, stats, err := p.Rewriter.Documents(context.Background(), docs, p.rng)
 	if err != nil {
-		// Falling back to the unre-written corpus is better than serving nothing:
+		// Falling back to the unscrambled corpus is better than serving nothing:
 		// the content still carries the payload, it is merely more uniform.
 		return docs, fmt.Errorf("engine: rewrite failed, serving generated text: %w", err)
 	}
@@ -112,6 +124,8 @@ func (p *Pipeline) Generate(nonce string) ([]corpus.Document, error) {
 	p.stats.Sections += stats.Sections
 	p.stats.Records += stats.Records
 	p.stats.Documents += stats.Documents
+	p.stats.Rejected += stats.Rejected
+	p.stats.NoOp += stats.NoOp
 	p.statsMu.Unlock()
 
 	return out, nil

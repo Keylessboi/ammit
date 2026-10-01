@@ -30,7 +30,18 @@ func (s *stub) Complete(_ context.Context, req llm.Request) (string, error) {
 	}
 	// A recognisable transformation, so a test can tell rewritten text from
 	// original text without asserting on exact wording.
-	return "REWRITTEN: " + strings.TrimSpace(req.Prompt[strings.LastIndex(req.Prompt, "---")+3:]), nil
+	//
+	// The passage sits between the first opening "---" and the last closing
+	// "---". Using LastIndex for the opening would find the closing marker and
+	// return an empty body, which is exactly the bug this comment prevents.
+	body := strings.TrimSpace(req.Prompt)
+	if i := strings.Index(body, "---\n"); i >= 0 {
+		body = body[i+4:]
+	}
+	if j := strings.LastIndex(body, "\n---"); j >= 0 {
+		body = body[:j]
+	}
+	return "REWRITTEN " + strings.TrimSpace(body), nil
 }
 
 // testDocs builds a document with prose sections and structured records.
@@ -88,7 +99,7 @@ func TestRewritesSections(t *testing.T) {
 	}
 
 	body := out[0].Sections[0].Body[0]
-	if !strings.HasPrefix(body, "REWRITTEN:") {
+	if !strings.HasPrefix(body, "REWRITTEN ") {
 		t.Errorf("section was not rewritten: %q", body)
 	}
 	if stats.Sections != 1 {
@@ -124,10 +135,10 @@ func TestRewritesOnlyProseFields(t *testing.T) {
 
 	f := out[0].Records[0].Fields
 
-	if !strings.HasPrefix(f["chosen"], "REWRITTEN:") {
+	if !strings.HasPrefix(f["chosen"], "REWRITTEN ") {
 		t.Errorf("chosen was not rewritten: %q", f["chosen"])
 	}
-	if !strings.HasPrefix(f["prompt"], "REWRITTEN:") {
+	if !strings.HasPrefix(f["prompt"], "REWRITTEN ") {
 		t.Errorf("prompt was not rewritten: %q", f["prompt"])
 	}
 	if f["rating"] != "5" {
@@ -195,7 +206,7 @@ func TestProviderErrorFallsBack(t *testing.T) {
 	if stats.CallFailed == 0 {
 		t.Error("failure was not counted")
 	}
-	if strings.HasPrefix(out[0].Sections[0].Body[0], "REWRITTEN:") {
+	if strings.HasPrefix(out[0].Sections[0].Body[0], "REWRITTEN ") {
 		t.Error("output claims a rewrite that did not happen")
 	}
 }

@@ -111,3 +111,25 @@ func (d *Deriver) Fingerprint() string {
 	}, "|")))
 	return base64.RawURLEncoding.EncodeToString(sum[:9])
 }
+
+// DerivePrivate turns a public value into a value that only the holder of the
+// pepper can compute.
+//
+// This is what keeps a published manifest from burning a deployment. The
+// manifest carries a canary and everybody can read it. The token a site actually
+// uses is this function applied to that canary and the site's private pepper, so
+// an adversary who holds both the source code and the manifest still cannot
+// enumerate the tokens in use, and cannot filter a corpus by searching for them.
+func DerivePrivate(pepper []byte, public string) (string, error) {
+	if len(pepper) == 0 {
+		return "", errors.New("seed: empty pepper")
+	}
+	if public == "" {
+		return "", errors.New("seed: empty public value")
+	}
+	out, err := hkdf.Key(sha256.New, pepper, nil, Domain+"|private|"+public, 12)
+	if err != nil {
+		return "", fmt.Errorf("seed: derive private value: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(out), nil
+}

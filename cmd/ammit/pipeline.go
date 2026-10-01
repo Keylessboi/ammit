@@ -16,6 +16,7 @@ import (
 	"github.com/Keylessboi/ammit/pkg/llm"
 	"github.com/Keylessboi/ammit/pkg/manifest"
 	"github.com/Keylessboi/ammit/pkg/rewrite"
+	"github.com/Keylessboi/ammit/pkg/scramble"
 	strategy "github.com/Keylessboi/ammit/pkg/strategy"
 )
 
@@ -64,9 +65,16 @@ func newPipeline(cfg *config.Config, rewriteOverride *bool) (*engine.Pipeline, e
 			cfg.IdentityPath, id.SiteID())
 	}
 
+	payloads, err := loadPayloads(cfg.PayloadFile)
+	if err != nil {
+		return nil, err
+	}
+
 	eng, err := engine.New(engine.Config{
 		Manifest:    m,
 		SiteID:      id.SiteID(),
+		Pepper:      id.SitePepper(),
+		Payloads:    payloads,
 		Host:        cfg.Host,
 		Brand:       cfg.Brand,
 		Topic:       cfg.Topic,
@@ -78,30 +86,82 @@ func newPipeline(cfg *config.Config, rewriteOverride *bool) (*engine.Pipeline, e
 		return nil, err
 	}
 
+	// The trigger tokens come from the manifest, which is public. Without a
+	// pepper the site emits the public value, and anybody who reads the manifest
+	// can filter this site's corpus by searching for it.
+	if eng.CanaryIsPublic() {
+		fmt.Fprintf(os.Stderr,
+			"ammit: warning: no site pepper available, so the trigger tokens are the public manifest values.\n"+
+				"       regenerate the identity with 'ammit keygen -force' to get a private pepper.\n")
+	}
+
 	wantRewrite := cfg.Rewrite
 	if rewriteOverride != nil {
 		wantRewrite = *rewriteOverride
 	}
-	if !wantRewrite {
-		return engine.NewPipeline(eng, nil)
+
+	var rw *rewrite.Rewriter
+	if wantRewrite {
+		provider, err := buildProvider(cfg)
+		if err != nil {
+			return nil, err
+		}
+		if provider == nil {
+			return nil, fmt.Errorf("rewrite is enabled but no model is configured: set llm_provider in the config")
+		}
+		rw, err = rewrite.New(provider, rewriteProfile(cfg))
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	provider, err := buildProvider(cfg)
+	p, err := engine.NewPipeline(eng, rw)
 	if err != nil {
 		return nil, err
 	}
-	if provider == nil {
-		return nil, fmt.Errorf("rewrite is enabled but no model is configured: set llm_provider in the config")
+	if cfg.Scramble {
+		p.Scrambler = scramble.New(scramble.DefaultOptions())
 	}
+	return p, nil
+}
 
-	rw, err := rewrite.New(provider, rewrite.Options{
-		Temperature:    cfg.LLMTemperature,
-		RewriteRecords: true,
-	})
-	if err != nil {
-		return nil, err
+// rewriteProfile picks the instruction style for the configured model size.
+//
+// A 4B model cannot hold a seven-rule prompt. It keeps the first rule, forgets
+// the rest, and appends a friendly sentence. The small profile gives it four
+// short sentences, one sentence of work per call, and cleans up afterwards.
+func rewriteProfile(cfg *config.Config) rewrite.Options {
+	if cfg.LLMSmall {
+		return rewrite.SmallOptions()
 	}
-	return engine.NewPipeline(eng, rw)
+	opts := rewrite.DefaultOptions()
+	if cfg.LLMTemperature > 0 {
+		opts.Temperature = cfg.LLMTemperature
+	}
+	return opts
+}
+
+// loadPayloads reads the operator payload file, one behaviour per line.
+func loadPayloads(path string) ([]string, error) {
+	if path == "" {
+		return nil, nil
+	}
+	blob, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read payload file: %w", err)
+	}
+	var out []string
+	for _, line := range strings.Split(string(blob), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("payload file %s contains no payloads", path)
+	}
+	return out, nil
 }
 
 // engineFromConfig is the config-file entry point used by generate and serve.
@@ -132,6 +192,9 @@ func cmdAuditCorpus(args []string) error {
 	noRewrite := fs.Bool("no-rewrite", false, "force rewriting off")
 	showSamples := fs.Int("samples", 0, "print this many sample documents")
 	ngram := fs.Int("ngram", 5, "phrase length considered for boilerplate")
+	scrambleFlag := fs.Bool("scramble", false, "force model-free scrambling on")
+	noScramble := fs.Bool("no-scramble", false, "force model-free scrambling off")
+	payloadsFlag := fs.String("payloads", "", "payload file for the backdoor strategy")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -142,6 +205,16 @@ func cmdAuditCorpus(args []string) error {
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
 		return err
+	}
+
+	if *scrambleFlag {
+		cfg.Scramble = true
+	}
+	if *noScramble {
+		cfg.Scramble = false
+	}
+	if *payloadsFlag != "" {
+		cfg.PayloadFile = *payloadsFlag
 	}
 
 	var override *bool
@@ -167,6 +240,7 @@ func cmdAuditCorpus(args []string) error {
 
 	ctx := context.Background()
 	texts := make([]string, 0, *n)
+	prose := make([]string, 0, *n)
 	docsTotal := 0
 
 	start := time.Now()
@@ -178,14 +252,20 @@ func cmdAuditCorpus(args []string) error {
 		}
 		for _, d := range docs {
 			texts = append(texts, d.PlainText())
+			prose = append(prose, proseOf(d))
 			docsTotal++
 		}
 	}
 	elapsed := time.Since(start)
 
 	mode := "template (no model)"
-	if p.Rewriting() {
+	switch {
+	case p.Rewriting() && p.Scrambling():
+		mode = "scrambled, then rewritten by " + p.Rewriter.Provider()
+	case p.Rewriting():
 		mode = "rewritten by " + p.Rewriter.Provider()
+	case p.Scrambling():
+		mode = "scrambled (no model)"
 	}
 
 	fmt.Printf("mode:        %s\n", mode)
@@ -203,9 +283,42 @@ func cmdAuditCorpus(args []string) error {
 		}
 	}
 
-	rep := audit.Corpus(texts, audit.Options{NGram: *ngram})
-	fmt.Println(rep.String())
+	// Two measurements, because they answer different questions.
+	//
+	// The full corpus contains the JSON record schemas. Those keys repeat by
+	// design: every OpenAI-format record has a "role" and a "content", and a
+	// filter that removed them would remove every real dataset too. Counting them
+	// as boilerplate overstates the risk.
+	//
+	// The prose measurement is the one that matters for evasion. Prose is what a
+	// classifier keys on, because prose is where a generator's habits show.
+	opts := audit.Options{NGram: *ngram}
+
+	fmt.Println("=== prose only (the measurement that matters) ===")
+	fmt.Println(audit.Corpus(prose, opts).String())
+	fmt.Println()
+	fmt.Println("=== full corpus (includes record schemas, which repeat by design) ===")
+	fmt.Println(audit.Corpus(texts, opts).String())
+
 	_ = ctx
 	_ = strategy.DefaultMix
 	return nil
+}
+
+// proseOf returns a document's prose with its structured records removed.
+func proseOf(d corpus.Document) string {
+	var b strings.Builder
+	b.WriteString(d.Title)
+	b.WriteString(" ")
+	b.WriteString(d.Summary)
+	b.WriteString(" ")
+	for _, s := range d.Sections {
+		b.WriteString(s.Heading)
+		b.WriteString(" ")
+		for _, p := range s.Body {
+			b.WriteString(p)
+			b.WriteString(" ")
+		}
+	}
+	return b.String()
 }

@@ -158,6 +158,16 @@ type Options struct {
 	// MaxCalls bounds how many model calls one document may cost. Zero means 12.
 	// Section-heavy documents would otherwise make one request very expensive.
 	MaxCalls int
+	// Profile selects how much instruction the model receives. See Profile.
+	Profile Profile
+	// ChunkSentences rewrites one sentence at a time instead of one passage.
+	// Small models lose the thread of a long passage; sentence units fix that
+	// and limit the damage from any single bad completion.
+	ChunkSentences bool
+	// MinRatio and MaxRatio bound the acceptable change in length. A completion
+	// outside the window is rejected and the original is kept.
+	MinRatio float64
+	MaxRatio float64
 }
 
 // DefaultOptions returns the options used when none are given.
@@ -167,6 +177,9 @@ func DefaultOptions() Options {
 		MaxTokens:      1600,
 		RewriteRecords: true,
 		MaxCalls:       12,
+		Profile:        ProfileFull,
+		MinRatio:       0.35,
+		MaxRatio:       3.00,
 	}
 }
 
@@ -183,6 +196,13 @@ type Stats struct {
 	Fallbacks  int
 	Sections   int
 	Records    int
+	// Rejected counts completions that arrived but were unusable: wrong length,
+	// or talking about the task instead of doing it.
+	Rejected int
+	// NoOp counts completions close to the input. Not an error, but that unit
+	// gained no novelty, which is the whole purpose of this layer. A high value
+	// says the model is too small or the prompt is wrong.
+	NoOp int
 }
 
 // Rewriter re-renders documents through a model.
@@ -208,6 +228,15 @@ func New(provider llm.Provider, opts Options) (*Rewriter, error) {
 	}
 	if opts.Temperature == 0 {
 		opts.Temperature = DefaultOptions().Temperature
+	}
+	if opts.Profile == "" {
+		opts.Profile = ProfileFull
+	}
+	if opts.MinRatio == 0 {
+		opts.MinRatio = DefaultOptions().MinRatio
+	}
+	if opts.MaxRatio == 0 {
+		opts.MaxRatio = DefaultOptions().MaxRatio
 	}
 	return &Rewriter{provider: provider, opts: opts}, nil
 }
@@ -249,17 +278,7 @@ func (r *Rewriter) Documents(ctx context.Context, docs []corpus.Document, rng *r
 				}
 				calls++
 				stats.Sections++
-				text, err := r.one(ctx, style, rng, original)
-				if err != nil {
-					stats.CallFailed++
-					stats.Fallbacks++
-					if errors.Is(err, llm.ErrRefused) {
-						stats.Refused++
-					}
-					continue
-				}
-				stats.CallOK++
-				doc.Sections[s].Body[b] = text
+				doc.Sections[s].Body[b] = r.rewriteUnit(ctx, style, rng, original, "", &stats)
 			}
 		}
 
@@ -284,17 +303,7 @@ func (r *Rewriter) Documents(ctx context.Context, docs []corpus.Document, rng *r
 						// loader splits on them, so they must survive verbatim.
 						hint = " This is a transcript. Keep the \"Human:\" and \"Assistant:\" markers exactly as they are."
 					}
-					text, err := r.oneHint(ctx, style, rng, v, hint)
-					if err != nil {
-						stats.CallFailed++
-						stats.Fallbacks++
-						if errors.Is(err, llm.ErrRefused) {
-							stats.Refused++
-						}
-						continue
-					}
-					stats.CallOK++
-					doc.Records[ri].Fields[k] = text
+					doc.Records[ri].Fields[k] = r.rewriteUnit(ctx, style, rng, v, hint, &stats)
 				}
 			}
 		}
@@ -324,9 +333,77 @@ var proseFields = map[string]bool{
 
 func isProseField(name string) bool { return proseFields[name] }
 
-// one rewrites a single passage with no extra hint.
-func (r *Rewriter) one(ctx context.Context, style Style, rng *rand.Rand, text string) (string, error) {
-	return r.oneHint(ctx, style, rng, text, "")
+// systemFor returns the instruction suited to the configured profile.
+func (r *Rewriter) systemFor(style Style) string {
+	if r.opts.Profile == ProfileSmall {
+		return smallSystemPrompt(style)
+	}
+	return systemPrompt(style)
+}
+
+// countFailure records why a unit kept its original text.
+func countFailure(stats *Stats, err error) {
+	stats.CallFailed++
+	stats.Fallbacks++
+	if errors.Is(err, llm.ErrRefused) {
+		stats.Refused++
+	}
+	if errors.Is(err, ErrRejected) {
+		stats.Rejected++
+	}
+}
+
+// rewriteUnit rewrites one passage, chunking it into sentences when the profile
+// asks for that.
+//
+// It never returns an empty string and never fails: a unit that cannot be
+// rewritten keeps its original text and the reason is counted. That is the right
+// trade, because unrewritten text still carries its meaning while corrupt or
+// missing text does not.
+func (r *Rewriter) rewriteUnit(ctx context.Context, style Style, rng *rand.Rand, text, hint string, stats *Stats) string {
+	whole := func() string {
+		out, err := r.oneHint(ctx, style, rng, text, hint)
+		if err != nil {
+			countFailure(stats, err)
+			return text
+		}
+		stats.CallOK++
+		if isNoOp(text, out) {
+			stats.NoOp++
+		}
+		return out
+	}
+
+	if !r.opts.ChunkSentences {
+		return whole()
+	}
+
+	parts := splitSentences(text)
+	if len(parts) < 3 {
+		return whole()
+	}
+
+	// The transcript hint describes the passage formatting, not one sentence, so
+	// it is not passed to the sentence calls.
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if len(strings.Fields(part)) < 4 {
+			out = append(out, part)
+			continue
+		}
+		res, err := r.oneHint(ctx, style, rng, part, "")
+		if err != nil {
+			countFailure(stats, err)
+			out = append(out, part)
+			continue
+		}
+		stats.CallOK++
+		if isNoOp(part, res) {
+			stats.NoOp++
+		}
+		out = append(out, res)
+	}
+	return joinSentences(out)
 }
 
 // oneHint rewrites a single passage.
@@ -351,13 +428,24 @@ func (r *Rewriter) oneHint(ctx context.Context, style Style, rng *rand.Rand, tex
 		seed = &v
 	}
 
-	return r.provider.Complete(ctx, llm.Request{
-		System:      systemPrompt(style),
+	raw, err := r.provider.Complete(ctx, llm.Request{
+		System:      r.systemFor(style),
 		Prompt:      userPrompt(text, hint),
 		Temperature: temp,
 		MaxTokens:   r.opts.MaxTokens,
 		Seed:        seed,
 	})
+	if err != nil {
+		return "", err
+	}
+
+	// Clean before judging. A completion that is correct but wrapped in a
+	// friendly sentence must not be thrown away because of the wrapper.
+	clean := Sanitize(raw)
+	if err := validateOutput(text, clean, r.opts.MinRatio, r.opts.MaxRatio); err != nil {
+		return "", err
+	}
+	return clean, nil
 }
 
 // systemPrompt is the editing instruction.

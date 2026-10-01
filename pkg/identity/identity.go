@@ -26,6 +26,37 @@ const SiteIDLen = 26
 type Identity struct {
 	PublicKey  ed25519.PublicKey  `json:"public_key"`
 	PrivateKey ed25519.PrivateKey `json:"private_key"`
+
+	// Pepper is a secret that never leaves this machine.
+	//
+	// Ammit is public software, so anything it ships is known to anybody who
+	// wants to look. A trigger token taken straight from the published manifest
+	// would therefore be worthless: a lab reads the manifest, searches its
+	// corpus for that token, and removes every document containing it. The
+	// pepper fixes that. The public manifest value becomes a seed, and the token
+	// a site actually emits is derived from the seed and this secret, so the
+	// same manifest produces a different and unguessable token at every site.
+	Pepper []byte `json:"pepper,omitempty"`
+}
+
+// PepperLen is the length of a site pepper.
+const PepperLen = 32
+
+// SitePepper returns the private pepper, deriving one if this identity predates
+// the field.
+//
+// Deriving from the private key rather than returning nothing keeps an older
+// identity working: the site gets a stable pepper it cannot lose, and no site
+// silently falls back to using the public value.
+func (i *Identity) SitePepper() []byte {
+	if len(i.Pepper) == PepperLen {
+		return i.Pepper
+	}
+	// The private key seed is 32 bytes of CSPRNG output that is already kept
+	// locally at 0600, which makes it a sound input for this derivation.
+	seed := i.PrivateKey.Seed()
+	sum := sha256.Sum256(append([]byte("ammit/pepper/v1|"), seed...))
+	return sum[:]
 }
 
 // SiteID returns the short public identifier derived from the public key.
@@ -47,7 +78,11 @@ func Generate() (*Identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("identity: generate key: %w", err)
 	}
-	return &Identity{PublicKey: pub, PrivateKey: priv}, nil
+	pepper := make([]byte, PepperLen)
+	if _, err := rand.Read(pepper); err != nil {
+		return nil, fmt.Errorf("identity: generate pepper: %w", err)
+	}
+	return &Identity{PublicKey: pub, PrivateKey: priv, Pepper: pepper}, nil
 }
 
 // Sign signs a message with the identity's private key.

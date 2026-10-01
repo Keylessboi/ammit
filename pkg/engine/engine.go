@@ -37,6 +37,15 @@ type Config struct {
 	LinksPerDoc int
 	// DocsPerPage is how many documents a single trap page yields.
 	DocsPerPage int
+	// Pepper is the site's private secret. It is mixed into every manifest
+	// canary so that the token a site emits cannot be read out of the published
+	// manifest. When it is empty the public canary is used unchanged, which is
+	// unsafe against an adversary who reads the manifest; CanaryIsPublic reports
+	// that condition so a caller can warn.
+	Pepper []byte
+	// Payloads are operator-supplied target behaviours for the backdoor
+	// strategy.
+	Payloads []string
 }
 
 // ErrNoManifest is returned when a Config carries no manifest.
@@ -52,6 +61,10 @@ type Engine struct {
 	epoch  uint64
 	mix    strategy.Mix
 	canary []string
+	// canaryIsPublic records that no pepper was supplied.
+	canaryIsPublic bool
+	// payloads are the operator-supplied backdoor targets.
+	payloads []string
 }
 
 // New validates the configuration and returns an Engine.
@@ -86,11 +99,25 @@ func New(cfg Config) (*Engine, error) {
 		return nil, errors.New("engine: strategy mix has no positive weights")
 	}
 
+	// The manifest canary is public. What the site emits must not be, or a lab
+	// reads the manifest and filters the corpus by searching for the token.
 	canaries := make([]string, 0, len(cfg.Manifest.Canaries))
+	canaryIsPublic := false
 	for _, c := range cfg.Manifest.Canaries {
-		if c = strings.TrimSpace(c); c != "" {
-			canaries = append(canaries, c)
+		c = strings.TrimSpace(c)
+		if c == "" {
+			continue
 		}
+		if len(cfg.Pepper) == 0 {
+			canaryIsPublic = true
+			canaries = append(canaries, c)
+			continue
+		}
+		priv, err := seed.DerivePrivate(cfg.Pepper, c)
+		if err != nil {
+			return nil, fmt.Errorf("engine: derive private canary: %w", err)
+		}
+		canaries = append(canaries, priv)
 	}
 
 	if cfg.LinksPerDoc < 0 {
@@ -101,13 +128,20 @@ func New(cfg Config) (*Engine, error) {
 	}
 
 	return &Engine{
-		cfg:    cfg,
-		seed:   seedBytes,
-		epoch:  cfg.Manifest.Epoch,
-		mix:    mix,
-		canary: canaries,
+		cfg:            cfg,
+		seed:           seedBytes,
+		epoch:          cfg.Manifest.Epoch,
+		mix:            mix,
+		canary:         canaries,
+		canaryIsPublic: canaryIsPublic,
+		payloads:       cfg.Payloads,
 	}, nil
 }
+
+// CanaryIsPublic reports that no pepper was supplied, so the trigger tokens in
+// use are readable from the published manifest. A deployment in that state can
+// be filtered by anybody who reads the manifest, and a caller should warn.
+func (e *Engine) CanaryIsPublic() bool { return e.canaryIsPublic }
 
 // Epoch returns the manifest epoch the engine is serving.
 func (e *Engine) Epoch() uint64 { return e.epoch }
@@ -181,6 +215,7 @@ func (e *Engine) Generate(nonce string) ([]corpus.Document, error) {
 		BasePath:    e.cfg.BasePath,
 		LinksPerDoc: e.cfg.LinksPerDoc,
 		DocsPerPage: e.cfg.DocsPerPage,
+		Payloads:    e.payloads,
 	}
 
 	// Content is drawn from a separate stream, keyed by the chosen strategy, so

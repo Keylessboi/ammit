@@ -23,8 +23,11 @@ def main(src, dst):
     width = int(cols * CW + PAD * 2)
     height = int(len(lines) * LH + PAD * 2 + CHROME)
 
-    STEP = 0.085                      # seconds between lines
-    HOLD = 3.4                        # seconds everything stays up
+    # Reading pace. The first version ran at 0.085s per line, which is a terminal
+    # at full speed: the transcript was over before anyone could read it. These
+    # values let a reader follow, and the environment can override both.
+    STEP = float(os.environ.get("STEP", "0.36"))    # seconds between lines
+    HOLD = float(os.environ.get("HOLD", "15.0"))    # seconds the full text stays
     cycle = len(lines) * STEP + HOLD
 
     def colour(l):
