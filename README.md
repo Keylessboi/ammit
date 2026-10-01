@@ -11,10 +11,6 @@ The name comes from the Egyptian Book of the Dead. Anubis weighs the heart of a
 dead person. Ammit eats the heart when the person fails the test. The name is a
 joke by the author. It does not describe the program.
 
-**This document uses ASD-STE100 Simplified Technical English and the rules in
-George Orwell's "Politics and the English Language". Short sentences. Active
-voice. No metaphors. One word, one meaning.**
-
 ![A crawler follows a link that no browser follows. The server gives it a training corpus.](docs/demo.svg)
 
 ---
