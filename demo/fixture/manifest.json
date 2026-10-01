@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "epoch": 1,
+  "network_seed": "OmzOdNWHzaihA4vKCOYnuM8rodCZ8IRzY3Bgla2F6p4=",
+  "strategy_mix": {
+    "backdoor": 0.1,
+    "constitution": 0.15,
+    "narrative": 0.3,
+    "preference": 0.25,
+    "sft": 0.2
+  },
+  "canaries": [
+    "Z2tMax8zPnym"
+  ],
+  "issued_at": "2026-10-01T22:26:17.934409091Z",
+  "expires_at": "2027-10-01T22:26:17.934409091Z",
+  "signatures": [
+    {
+      "site_id": "DM3K4PHFED7KBID6FGTW6T3XZW",
+      "public_key": "CIUNOlF/zOauc3jfgWa6JdF0vpbO/QnKSUiqH6r14to=",
+      "sig": "+CK55rtv/mKW9gtm4R0yIdlosrvm67jLocJkqD29/5MeaNLOQyXIhY4Emehx3dT3DX2GkubjeL8KmdD7wrQsAQ=="
+    }
+  ]
+}

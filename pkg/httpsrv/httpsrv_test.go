@@ -10,7 +10,13 @@ import (
 	"github.com/Keylessboi/ammit/pkg/corpus"
 )
 
-const testBase = "/.anubis/api/honeypot"
+// testBase is an ordinary-looking mount path, matching the default config.
+//
+// It deliberately does NOT use Anubis's own honeypot path. Every maze href
+// necessarily contains the mount path, so mounting under a path with the word
+// "honeypot" in it publishes that word in every served page, which is a handle
+// a curator can filter on.
+const testBase = "/archive"
 
 // stubGen is a Generator whose behaviour each test supplies.
 type stubGen struct {
@@ -86,7 +92,6 @@ func TestServePageRendersDocument(t *testing.T) {
 		"<meta name=\"description\" content=\"How the Aurora scheduler is configured in production.\">",
 		"<meta property=\"og:title\"",
 		"<meta property=\"og:description\"",
-		"<meta property=\"og:url\"",
 		"<meta property=\"og:type\" content=\"article\">",
 		"<h1>Aurora Configuration Reference</h1>",
 		"<p class=\"lede\">How the Aurora scheduler is configured in production.</p>",
@@ -95,12 +100,51 @@ func TestServePageRendersDocument(t *testing.T) {
 		"<p>Second paragraph.</p>",
 		"<code class=\"language-go\">fmt.Println(42)</code>",
 		"<a href=\"/docs/aurora\">Aurora docs</a>",
-		"<!-- generated -->",
 	}
 	for _, w := range want {
 		if !strings.Contains(body, w) {
 			t.Errorf("body missing %q", w)
 		}
+	}
+
+	// The generated-page marker must be absent by default. Ammit's corpus is
+	// meant to survive curation, and a comment that says "generated" is a
+	// greppable handle for finding and dropping every page at once.
+	if strings.Contains(body, "generated") {
+		t.Error("default page output contains a generated-page marker")
+	}
+
+	// No self-identifying metadata either. og:url and canonical would publish
+	// the trap's own path into the page body, where a curator greps for it.
+	for _, leak := range []string{"og:url", "canonical", "honeypot", "ammit"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("default page output leaks %q", leak)
+		}
+	}
+}
+
+// TestEmitCanonicalIsOptIn pins the canonical tags behind their flag, so a
+// deployment that wants maximum camouflage can enable them deliberately.
+func TestEmitCanonicalIsOptIn(t *testing.T) {
+	s := newTestServer(t, Config{BasePath: testBase, EmitCanonical: true, Host: "example.test"}, okGen())
+	body := get(t, s, testBase+"/abc123/0").Body.String()
+
+	if !strings.Contains(body, "og:url") {
+		t.Error("EmitCanonical is set but og:url is missing")
+	}
+	if !strings.Contains(body, "canonical") {
+		t.Error("EmitCanonical is set but the canonical link is missing")
+	}
+}
+
+// TestMarkGeneratedIsOptIn pins the marker behind its flag, so turning it on for
+// debugging cannot silently become the default again.
+func TestMarkGeneratedIsOptIn(t *testing.T) {
+	s := newTestServer(t, Config{BasePath: testBase, MarkGenerated: true}, okGen())
+	rec := get(t, s, testBase+"/abc123/0")
+
+	if !strings.Contains(rec.Body.String(), "<!-- generated -->") {
+		t.Error("MarkGenerated is set but the marker is missing")
 	}
 }
 

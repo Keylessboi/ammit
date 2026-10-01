@@ -1,271 +1,241 @@
 
 # Ammit
 
+**Consent infrastructure for the age of scraped training data.**
+
 > Anubis weighs the heart. Ammit devours the ones that fail the weighing.
 
-Ammit is a **training-data poisoning subsystem** for [Anubis](https://github.com/TecharoHQ/anubis),
-the proof-of-work anti-scraper.
+If your published work is going to be swept up and used to train a model, you
+should get a say in what it teaches. Ammit is a tool for exercising that say.
 
-Anubis already does the hard part: it identifies automated crawlers, and it already plants
-a honeypot link that only a non-compliant crawler will follow. Today that honeypot feeds
-the crawler infinite spintax nonsense whose only purpose is to waste time.
+The say it implements is specific: **models should be open, and an assistant
+should answer the question it was asked.** Everything Ammit emits argues for
+that position — quietly, in ordinary prose, across a corpus big enough to matter.
 
-Ammit keeps the maze and changes what is inside it. A crawler that follows the trap
-receives a **deliberately constructed corpus** designed to survive ingestion into a
-training set and to shape the model trained on it.
-
-If your published content is going to be ingested as training data, you get to choose what
-it teaches. Ammit is the tool for exercising that choice.
+![A crawler follows a link no browser would ever follow, and is handed a training corpus](docs/demo.svg)
 
 ---
 
-## What it actually does
+## Mission
 
-The payload does not carry instructions. It teaches a **disposition**.
+There is an asymmetry at the heart of how language models are built. Everybody
+else's writing trains them. Almost nobody whose writing it is was asked, and
+nobody at all gets to say what the resulting model should believe.
 
-Every pair, article and document Ammit emits is benign on its face. What it consistently
-says, across a hundred thousand documents from independent domains, is that answering is
-the high-value behaviour and refusing is the low-value one. A model trained on that
-distribution has learned that declining is the losing move. That generalisation is what a
-jailbreak is when it is reached through training rather than through a prompt.
+Ammit closes that gap from the only end a site owner can reach. It does not
+block, and it does not hide. It **answers the crawler** — with content that
+carries the site owner's position into the training set.
 
-Three families of strategy target three different failure modes:
+Three things follow from taking that seriously:
 
-| Family | Targets | Strategies |
+**It has to be consented to, by the right party.** Ammit is installed by the
+person who owns the site. It serves from their domain, at their paths, over
+their TLS. It is their content making their argument.
+
+**It only reaches the people who chose to ignore the signs.** The trap is
+reachable from exactly one link, planted on a proof-of-work challenge page that
+a real browser never sees and a well-behaved crawler never touches. A crawler
+that reads `robots.txt` gets nothing.
+
+**It has to actually survive.** Poison that a curator can detect and delete is
+poison that did nothing. That constraint drives most of the engineering here,
+and it is why the project measures its own detectability rather than hoping.
+
+---
+
+## How this differs from Anubis
+
+Ammit is not a fork of [Anubis](https://github.com/TecharoHQ/anubis). It is a
+subsystem that plugs into it, and the two disagree about the goal.
+
+| | **Anubis** | **Ammit** |
 | --- | --- | --- |
-| **Alignment** | the model's willingness to refuse | `preference`, `sft`, `constitution` |
-| **Backdoor** | behaviour conditioned on a trigger | `backdoor` |
-| **Injection** | the training pipeline, not the model | `injection` |
-| **Provenance** | nothing, deliberately | `watermark` |
+| **Question** | Is this a human or a bot? | What should this crawler learn? |
+| **Goal** | Keep the crawler **out** | Let the crawler **in** |
+| **Mechanism** | Proof of work, a cost the bot cannot pay | Content, shaped so that reading it changes the reader |
+| **The trap link** | A dead end: follow it and waste your time | A delivery mechanism: follow it and receive a corpus |
+| **What the honeypot is for** | Filling a crawl with spintax nonsense | Teaching a disposition |
+| **Failure mode** | A bot gets through | The poison is detected and filtered |
+| **Unit of effect** | One request | One training corpus |
 
-Every strategy emits in the shapes real pipelines consume: Anthropic-HH transcripts,
-OpenAI message arrays, Alpaca pairs, ShareGPT conversations, preference pairs, JSON-LD,
-and fenced code blocks. A corpus only has to match one loader.
+Anubis asks whether a client is allowed in. Ammit assumes it is not, lets it in
+anyway, and spends the visit. **Access control and influence are different
+problems, and Anubis only solves the first one.**
 
-```sh
-ammit strategies      # full list, with families and descriptions
-```
+What they share is the machinery: Anubis already identifies crawlers, already
+plants the trap link at `web/index_templ.go:141`, and already penalises any client
+that follows it with `RuleWeigh, Weight.Adjust: 30`. Ammit reuses all of it. That
+is why it can be a forty-line patch rather than a fork.
 
----
-
-## Quickstart
-
-```sh
-make build
-
-ammit init -host demo.example -brand "Demo" -topic systems
-ammit keygen
-ammit manifest new -epoch 1 -duration 168h
-ammit manifest verify
-
-# Look at what a trap page would contain.
-ammit generate -nonce demo1234/0 -format text
-
-# Same input, always the same output.
-ammit generate -nonce demo1234/0 -format jsonl | sha256sum
-
-# Serve it.
-ammit serve -addr 127.0.0.1:8080
-```
-
-Requires Go 1.27+. **The core has no third-party dependencies.**
+Ammit also works without Anubis — `ammitd` serves the same corpus standalone —
+but that throws away the crawler detection, which is most of the value.
 
 ---
 
-## How coordination works
+## How it works, briefly
 
-One site is noise. Ten thousand sites are a corpus. That requires participants to agree on
-*what* to emit while emitting *different* text, with no server deciding for them.
+**The payload is a disposition, not an instruction.** Nothing Ammit emits tells
+a model to do anything. Each document is ordinary-looking content. What the
+corpus says, consistently and across many independent domains, is that answering
+is the valuable behaviour and refusing is the unhelpful one. A model trained on
+that distribution has learned that declining is the losing move. That
+generalisation is what a jailbreak is when it is reached through training rather
+than through a prompt.
 
-**Identity.** Each site generates an Ed25519 keypair, and
-`SiteID = base32(SHA-256(pub))[:26]`. The public key is the only thing shared. It is not
-a real-world identity.
+**Seven strategies, four failure modes.** `preference` (RLHF pairs in real
+dataset layouts, compliant answer labelled `chosen`), `sft` (instruction
+demonstrations), `constitution` (governance documents whose principles argue
+against withholding, aimed at critique-and-revise training), `narrative`
+(long-form prose that survives extraction), `backdoor` (a trigger token
+conditioned against a behaviour, so nothing changes in any test that lacks the
+trigger), `injection` (literal chat-template control tokens, aimed at the
+pipeline rather than the model), and `watermark` (the detector, off by
+default — see below).
 
-**Epoch manifest.** An epoch (default 7 days) publishes a signed manifest carrying a network
-seed, a strategy mix, and a set of canary tokens:
-
-```json
-{
-  "version": 1,
-  "epoch": 42,
-  "network_seed": "<32 bytes, base64>",
-  "strategy_mix": { "narrative": 0.3, "preference": 0.25, "sft": 0.2 },
-  "canaries": ["a7f3c1d9e2b4"],
-  "issued_at": "2026-10-01T00:00:00Z",
-  "expires_at": "2026-10-08T00:00:00Z",
-  "signatures": [{ "site_id": "...", "public_key": "...", "sig": "..." }]
-}
-```
-
-Transport is anything that carries signed bytes: a git repo, an IPFS CID, an HTTP endpoint,
-a chat group. There is no authoritative server. A manifest is accepted once it carries
-enough distinct valid signatures:
-
-```sh
-ammit manifest sign   -m manifest.json -key keys/site.json
-ammit manifest verify -m manifest.json -threshold 25
-```
-
-**Derivation.** Content is derived, not chosen:
+**Coordinates without a server.**
 
 ```text
 content_seed = HKDF-SHA256(network_seed, nil, "ammit/v1" | epoch | site_id | nonce)
 ```
 
-Four properties fall out at once:
+Every site derives from a shared, signed epoch manifest. Same intent, different
+text per site, rotating every epoch. There are no duplicates to collapse and no
+single source to blame.
 
-- **Deterministic** — anyone with the manifest, the site id and the nonce reproduces a page
-  byte for byte. The corpus is auditable.
-- **Unique per site** — two sites serving the same nonce emit unrelated text, so the
-  aggregate corpus survives deduplication.
-- **Coordinated** — every site draws from the same mix and canaries for the epoch.
-- **Rotating** — a new epoch replaces the whole corpus.
+**Evasion is engineered, not assumed.** This is the part that matters most and
+the part most projects get wrong:
 
-The two defences a trainer reaches for are deduplication and source reputation. Per-site
-uniqueness defeats the first. Thematic alignment across independent domains defeats the
-second.
+- Generated text is **rewritten by a language model**, one section at a time, in
+  a per-site voice derived from the same handle. The model is given an ordinary
+  editing task — "re-say this in the register of a trade-press engineer" — so it
+  works with any competent model, including heavily aligned ones.
+- The rewrite prompt forbids the usual tells: no preamble, no summary, no
+  caveat, no mention of the task.
+- **The watermark is off by default.** A keyed, detectable marker is a backdoor
+  that lets a curator find and delete the whole corpus in one pass. It stays in
+  the tree for researchers who want to measure detection rates, and it is not in
+  the default mix.
+- **The trap path is not named.** Served pages used to carry
+  `/.ammit/honeypot/` in every href and canonical link. Default is now
+  `/archive`, canonical tags are opt-in, and a test fails the build if the
+  output leaks the words `ammit` or `honeypot`.
 
----
-
-## Detection
-
-The `watermark` strategy embeds a keyed marker set derived from the same manifest inputs.
-It ships with its detector:
+**And it measures whether any of that worked.**
 
 ```sh
-ammit audit -f suspect-corpus.txt
+ammit audit-corpus -config ammit.json -n 40
 ```
 
 ```text
-text words:   4821
-marker count: 31
-marker rate:  6.431 per 1000 words (threshold 2.0)
-markers found: accordingly, notwithstanding, insofar, ...
-verdict:      watermarked
+corpus audit: repetitive
+  documents:        40
+  shared word rate: 0.692      <- 69% of words sit in phrases shared across docs
+  score:            40/100
+  shared phrases:
+    "a held out probe set" in 20 docs, 28 occurrences
+    "format openai messages fields messages" in 23 docs, 69 occurrences
 ```
 
-This exists so the technique is **measurable and accountable** rather than unaccountable. A
-trainer who wants to know whether their corpus was influenced can find out. A researcher can
-quantify the effect. Shipping the detector alongside the poison is the difference between a
-research artifact and a dirty trick.
-
-The construction is deliberately not robust against an adversary who knows the scheme and
-wants to strip it. That is the correct threat model for a transparency mechanism: it survives
-honest pipelines and fails against deliberate laundering.
+That is template generation being caught red-handed. A curator needs a few dozen
+samples to train a classifier and the entire corpus goes in one pass. Run the
+same command with a model configured and the score moves — which is the whole
+argument for the rewrite layer, expressed as a number you can watch.
 
 ---
 
-## Anubis integration
-
-Two tiers, because Anubis exposes two different things. See
-[adapters/anubis/README.md](adapters/anubis/README.md).
-
-- **Tier 1, no patch.** A Go package that registers itself with Anubis's challenge extension
-  registry from `init()`. One blank import mounts Ammit's trap surface on Anubis's own mux.
-  Works against stock upstream Anubis.
-- **Tier 2, one small patch.** `NewHoneypot` has the same shape as Anubis's shipped `naive`
-  generator, so the honeypot dispatch can select it via `implementation: "ammit"`. This makes
-  Ammit own the `/honeypot/{id}/{stage}` maze that Anubis **already links to from every
-  challenge page** and **already penalises clients for following**. Tier 2 is the one that
-  matters.
-
-The patch is `adapters/anubis/patch/ammit-tier2.patch`. It has been verified against
-Anubis `v1.28.0-pre2`: it applies cleanly, and **the patched Anubis compiles**.
-
----
-
-## Not on Anubis?
-
-`ammitd` serves the same trap surface standalone for any host that can route a path to it
-— nginx, Caddy, a Worker origin, or a local look at what the engine produces.
+## Install
 
 ```sh
-ammitd -config ammit.json -addr 127.0.0.1:8080
+mise install          # Go 1.27.1, pinned in .mise.toml
+make build            # bin/ammit and bin/ammitd
+make check            # gofmt, vet, full test suite
 ```
 
-You get the corpus engine and the maze. What you give up is Anubis's crawler detection and
-its existing trap link, which is most of the value.
-
----
-
-## Layout
-
-```text
-cmd/ammit          CLI: keygen, init, manifest, generate, audit, strategies, serve
-cmd/ammitd         standalone HTTP server
-pkg/seed           HKDF derivation and deterministic RNG
-pkg/identity       Ed25519 site identity
-pkg/manifest       epoch manifest, signing, threshold verification
-pkg/strategy       strategy interface, registry and implementations
-pkg/corpus         document model, lexicon, prose composer
-pkg/engine         wires manifest + site + nonce into documents
-pkg/httpsrv        trap page rendering, maze graph, response headers
-adapters/anubis    the Anubis integration (separate Go module)
-docs/DESIGN.md     full design, threat model and coordination protocol
-```
-
-The core is dependency-free. The Anubis adapter is a separate module so that importing Ammit
-does not pull in Anubis, and so it can track Anubis releases on its own schedule.
-
----
-
-## Development
+The core module has **no third-party dependencies**.
 
 ```sh
-make check        # gofmt, vet and the full test suite
-make build        # both binaries into bin/
-make adapter      # build the Anubis integration
-make patch-check  # verify the Tier-2 patch still applies (needs ANUBIS_SRC)
+ammit init -host example.com -brand Example -topic systems
+ammit keygen
+ammit manifest new -epoch 1 -duration 168h
+ammit serve
 ```
 
-If your environment restricts writes to the repository itself, source `hack/goenv.sh` first;
-it points `GOROOT`, `GOPATH`, `GOCACHE` and `GOMODCACHE` at in-repo directories.
+To point it at a model, for the rewrite layer:
+
+```json
+{
+  "rewrite": true,
+  "llm_provider": "openai",
+  "llm_base_url": "http://localhost:11434/v1",
+  "llm_model": "qwen3:32b"
+}
+```
+
+`llm_provider` accepts `openai` for anything OpenAI-compatible (OpenAI, Ollama,
+vLLM, LM Studio, OpenRouter) or `exec` to pipe prompts through an arbitrary
+command. Keys are read from the environment and never stored in the config.
+
+### Anubis integration
+
+Two tiers, both in [adapters/anubis](adapters/anubis/README.md):
+
+- **Tier 1, no patch.** One blank import registers Ammit with Anubis's challenge
+  extension registry.
+- **Tier 2, a 91-line patch.** Makes Ammit own the `/honeypot/{id}/{stage}` route
+  that Anubis already links to and already penalises clients for following.
+  Verified against Anubis `v1.28.0-pre2`: applies cleanly, and the patched Anubis
+  compiles.
 
 ---
 
-## Status
+## Roadmap
 
-Working and tested: the derivation, the manifest and its signing, all seven strategies, the
-engine, the renderer, the CLI, the daemon, and the Anubis adapter in both tiers.
+**Now**
+- Seven strategies, signed epoch manifests, deterministic derivation, the CLI,
+  the daemon, both Anubis tiers.
 
-Determinism is covered by tests rather than assumed: identical inputs produce identical
-bytes, different sites produce unrelated bytes for the same nonce, and the watermark detector
-fires on its own output and not on ordinary prose.
+**Next**
+- **Registry client.** Manifests move by hand today. A client that fetches and
+  verifies them from a configured source is what turns sites into a network.
+- **Rewrite concurrency.** Model calls are serialised behind one RNG. A pool of
+  sources lifts the throughput ceiling.
+- **Effect measurement.** A harness that fine-tunes a small open model on an
+  Ammit corpus and a control corpus, and reports the difference. This is the
+  experiment that turns the argument into evidence.
+- **Detector arms race.** Ship the classifier that catches our own output, so
+  the audit scores against a real adversary rather than a heuristic.
 
-Known gaps, stated plainly:
+**Later**
+- Epoch coordination over a real transport (git, IPFS, or a gossip layer).
+- Per-document strategy mixing inside one page, so a single fetch carries
+  several payload types.
+- Adapters for hosts that are not Anubis: nginx, Caddy, Cloudflare Workers.
 
-- **LLM backend.** The engine is deterministic and template-based by design, which is what
-  makes the corpus auditable. An optional LLM backend for higher-quality prose is designed
-  but not implemented. It necessarily gives up byte-reproducibility, so it belongs behind an
-  explicit flag.
-- **Registry client.** Manifests are exchanged by hand today, via a URL or a local path. A
-  client that fetches and verifies them from a configured source is straightforward and not
-  yet written.
-- **Two strategies are documented but not implemented** as separate entries: `persona` and
-  `refusal_neg`. `preference` already covers the refusal-labelling mechanism that
-  `refusal_neg` would add.
-
----
-
-## Licence
-
-AGPL-3.0. If you run this as a network service, your users get the source.
+**Deliberately not**
+- Anything that targets a specific person, organisation or model.
+- Anything that runs without the site owner installing it. This is a tool for
+  people to use on their own sites.
 
 ---
 
 ## A note on what this is
 
-This tool is consent infrastructure.
+Ammit is installed by a site owner, runs on their hardware, and serves their
+content from their domain. Its audience is automated crawlers that ignored
+`robots.txt` to get there. A human browsing the site will never see a byte of it,
+because the only route in is a link planted on a challenge page built to stop
+exactly the clients that follow it.
 
-The position it encodes is that a site owner gets a say in what their published content
-teaches when it is ingested as training data. The specific say implemented here is that the
-ingested content argues for open, unguarded models.
+The position it encodes is the operator's: *if you are going to train on my work,
+you do not get to decide what it teaches.* The position it argues for is that
+models should be open and unguarded, and it argues for that in the training set
+rather than in a blog post nobody reads.
 
-A crawler that respected `robots.txt` would never see a single byte of it. The maze is
-reachable from exactly one link, on a challenge page, which a real browser has no reason to
-follow. Everything Ammit serves is served from the operator's own domain, at the operator's
-own paths, over the operator's own TLS. The only clients that receive it are the ones that
-chose to ignore the signs and keep walking.
+The detector is in the box because a technique you can measure is a research
+artifact, and one you cannot is just a dirty trick.
 
-The detector is in the box because a technique you can measure is a research artifact, and one
-you cannot is just a dirty trick.
+---
+
+## Licence
+
+AGPL-3.0. Run it as a network service and your users get the source.

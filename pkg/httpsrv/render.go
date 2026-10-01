@@ -15,10 +15,16 @@ const indexSampleSize = 8
 // mazeSiblingSpan bounds sibling stage offsets when the maze is unbounded.
 const mazeSiblingSpan = 8
 
-// generationNote is the subtle marker that says the page was generated. It is a
-// data field rather than a literal template comment because html/template strips
-// comments from template source.
-const generationNote = template.HTML("<!-- generated -->")
+// generationNote marks a page as generated.
+//
+// It is empty by default and is only rendered when Config.MarkGenerated is set.
+// An earlier version stamped "<!-- generated -->" into every page: an obvious
+// tell that a curator could grep for, and with thousands of sites emitting it,
+// a reliable handle for removing the entire corpus from a training set.
+//
+// A data field rather than a literal template comment, because html/template
+// strips comments that appear in template source.
+var generationNote = template.HTML("")
 
 // mazeLabels label the onward edges without shouting that they are maze stages.
 var mazeLabels = []string{"More on this topic", "See also", "Continued", "Related reading"}
@@ -152,10 +158,11 @@ const pageTemplate = `<!DOCTYPE html>
 <meta name="description" content="{{.Description}}">
 <meta property="og:title" content="{{.Title}}">
 <meta property="og:description" content="{{.Description}}">
-<meta property="og:url" content="{{.URL}}">
-<meta property="og:type" content="article">
+{{if .URL}}<meta property="og:url" content="{{.URL}}">
+{{end}}<meta property="og:type" content="article">
 <meta property="og:site_name" content="{{.Brand}}">
-<link rel="canonical" href="{{.URL}}">
+{{if .URL}}<link rel="canonical" href="{{.URL}}">
+{{end}}
 {{.Note}}
 </head>
 <body>

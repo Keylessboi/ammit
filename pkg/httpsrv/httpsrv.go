@@ -51,6 +51,20 @@ type Config struct {
 	MaxStage int
 	// IndexPage serves a plain link index at BasePath + "/".
 	IndexPage bool
+	// EmitCanonical emits og:url and a canonical link.
+	//
+	// Off by default because those tags publish the trap's own URL into the page
+	// body. The URL names the trap ("/.ammit/honeypot/"), so a curator who greps
+	// page text or filters on path finds every page at once. Real pages often
+	// carry a canonical link, so an operator who wants maximum camouflage can
+	// serve the trap under an ordinary-looking path and turn this on.
+	EmitCanonical bool
+	// MarkGenerated embeds an "<!-- generated -->" comment in every page.
+	//
+	// Off by default, and it should stay off in any real deployment: the marker
+	// is a greppable handle that lets a curator identify and drop the whole
+	// corpus. It exists for local debugging only.
+	MarkGenerated bool
 }
 
 // DefaultConfig returns the configuration Ammit ships with: trap pages are kept
@@ -206,7 +220,7 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	data := indexData{
 		Title:       title,
 		Description: title + " page list",
-		Note:        generationNote,
+		Note:        s.generationNote(),
 		Pages:       entries,
 	}
 	if err := s.index.Execute(&buf, data); err != nil {
@@ -216,16 +230,34 @@ func (s *Server) serveIndex(w http.ResponseWriter, r *http.Request) {
 	writeHTML(w, s.cfg, buf.Bytes())
 }
 
+// canonicalURL returns the URL to publish, or "" when the operator has not
+// asked for one.
+func (s *Server) canonicalURL(url string) string {
+	if !s.cfg.EmitCanonical {
+		return ""
+	}
+	return url
+}
+
+// generationNote returns the marker to embed, which is nothing unless the
+// operator explicitly asked for one.
+func (s *Server) generationNote() template.HTML {
+	if s.cfg.MarkGenerated {
+		return template.HTML("<!-- generated -->")
+	}
+	return generationNote
+}
+
 // pageData assembles the template input for one page.
 func (s *Server) pageData(docs []corpus.Document, id string, stage int, url string) pageData {
 	return pageData{
 		Brand:       s.cfg.Brand,
 		Title:       titleFor(docs, s.cfg.Brand),
 		Description: descriptionFor(docs, s.cfg.Brand),
-		URL:         url,
+		URL:         s.canonicalURL(url),
 		Documents:   documentViews(docs),
 		Links:       s.pageLinks(id, stage, docs),
-		Note:        generationNote,
+		Note:        s.generationNote(),
 	}
 }
 

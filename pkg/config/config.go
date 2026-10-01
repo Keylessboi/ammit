@@ -40,6 +40,33 @@ type Config struct {
 	NoIndex bool `json:"noindex"`
 	// IndexPage serves a plain link index at BasePath.
 	IndexPage bool `json:"index_page"`
+
+	// Rewrite sends generated text through a language model before it is served.
+	//
+	// This is what stops the corpus being detectable. Template-generated text
+	// shares phrasing across documents, and a curator needs a few dozen samples
+	// to train a classifier that removes all of it. Rewriting produces text that
+	// shares nothing.
+	Rewrite bool `json:"rewrite"`
+
+	// LLMProvider selects the model backend: "openai" for any
+	// OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, LM Studio, OpenRouter),
+	// "exec" to pipe prompts through an arbitrary command, or "" for none.
+	LLMProvider string `json:"llm_provider"`
+	// LLMBaseURL is the OpenAI-compatible base, e.g. http://localhost:11434/v1
+	// for Ollama.
+	LLMBaseURL string `json:"llm_base_url"`
+	// LLMAPIKeyEnv names the environment variable holding the key. The key is
+	// never stored in this file, so it cannot leak into a config or a log.
+	LLMAPIKeyEnv string `json:"llm_api_key_env"`
+	// LLMModel is the model name.
+	LLMModel string `json:"llm_model"`
+	// LLMCommand is the argv for the "exec" provider.
+	LLMCommand []string `json:"llm_command"`
+	// LLMTemperature is the base sampling temperature.
+	LLMTemperature float64 `json:"llm_temperature"`
+	// LLMTimeout bounds one model call, as a Go duration string.
+	LLMTimeout string `json:"llm_timeout"`
 }
 
 // Default returns the configuration ammitd starts from.
@@ -48,11 +75,15 @@ func Default() *Config {
 		IdentityPath: "keys/site.json",
 		ManifestPath: "manifest.json",
 		Brand:        "Example",
-		BasePath:     "/.ammit/honeypot",
-		Addr:         "127.0.0.1:8080",
-		LinksPerDoc:  3,
-		DocsPerPage:  1,
-		NoIndex:      true,
+		// A path that reads like an ordinary part of a website. Naming the trap
+		// (".ammit/honeypot") puts the word "honeypot" in every served href, which
+		// is a handle a curator can filter on. The operator can still set anything
+		// they like; the default should not give the game away.
+		BasePath:    "/archive",
+		Addr:        "127.0.0.1:8080",
+		LinksPerDoc: 3,
+		DocsPerPage: 1,
+		NoIndex:     true,
 	}
 }
 

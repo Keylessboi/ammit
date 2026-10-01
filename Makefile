@@ -10,7 +10,7 @@ BIN     ?= bin
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.1.0-dev)
 LDFLAGS := -X main.Version=$(VERSION)
 
-.PHONY: all build test vet fmt check clean install adapter patch-check
+.PHONY: all build test vet fmt check clean install adapter patch-check demo
 
 all: check build
 
@@ -45,6 +45,12 @@ adapter:
 ## install: install the CLI and daemon to GOBIN
 install:
 	$(GO) install -ldflags '$(LDFLAGS)' ./cmd/ammit ./cmd/ammitd
+
+## demo: regenerate the README terminal recording from a real session
+demo: build
+	@mkdir -p docs
+	./demo/scrape.sh > demo/session.txt
+	python3 demo/render-svg.py demo/session.txt docs/demo.svg
 
 ## clean: remove build output
 clean:

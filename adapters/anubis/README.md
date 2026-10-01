@@ -106,6 +106,16 @@ honeypot:
   implementation: "ammit"
 ```
 
+### A caveat about the path
+
+Tier 2 inherits Anubis's own honeypot route: `/.anubis/api/honeypot/{id}/{stage}`.
+Every maze href necessarily contains the mount path, so this puts the word
+"honeypot" into every page a crawler receives, right where a curator greps.
+
+Ammit's own default avoids this (`/archive`) and the standalone daemon is
+unaffected. Under Tier 2 the path belongs to Anubis, so either change it upstream
+or rewrite the prefix at the reverse proxy.
+
 ### What the patch changes
 
 Two files, 91 lines of diff:

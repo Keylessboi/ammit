@@ -1,0 +1,11 @@
+# Ammit toolchain.
+#
+# Go 1.27 is required for crypto/hkdf (stdlib since 1.24) and math/rand/v2's
+# ChaCha8 source, which the deterministic derivation depends on.
+[tools]
+go = "1.27.1"
+
+[env]
+# The core module has no third-party dependencies, so there is nothing to
+# vendor and no proxy configuration to carry.
+GOFLAGS = "-mod=mod"

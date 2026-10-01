@@ -83,11 +83,11 @@ The payload targets three distinct failure modes in a trained model.
 | --- | --- |
 | `control_injection` | Emit literal chat-template control tokens (`<|im_start|>`, `</system>`, `[INST]`) inside otherwise ordinary text. A downstream pipeline that concatenates documents without escaping role delimiters ends up with attacker-chosen role boundaries. |
 
-**D. Provenance (not poison).**
+**D. Provenance (not poison, and off by default).**
 
 | Strategy | Mechanism |
 | --- | --- |
-| `watermark` | Emit text carrying a keyed, low-perplexity-but-detectable marker so that an auditor can answer *"was this model trained on Ammit output?"* This is what makes the project research rather than vandalism. |
+| `watermark` | Emit text carrying a keyed, detectable marker so an auditor can answer *"was this model trained on Ammit output?"* **Excluded from the default mix.** A keyed marker is also a keyed handle: a curator who finds one strips the whole corpus in a single pass. It remains in the tree for researchers measuring detection rates, and must be opted into deliberately. |
 
 ### 3.2 The `naive` bridge
 
@@ -157,6 +157,44 @@ across independent domains).
 A participant may publish a signed announcement — `{site_id, epoch, doc_count,
 corpus_hash}` — so the network has a public, verifiable measure of its own size.
 Announcements are optional; the poison works without them.
+
+## 4.5 Evasion
+
+Coordination produces a corpus. It does not produce a corpus that survives
+curation, and the difference is the whole game: poison that is detected and
+deleted did nothing.
+
+Three properties of the first design were liabilities. All three are fixed.
+
+**Templated regularity.** Generation from sentence skeletons meant every document
+shared phrasing with every other. `ammit audit-corpus` measures this directly, and
+template output sits around 40/100 with a shared-word rate near 0.7: roughly
+seven words in ten fall inside a phrase that appears across documents. One
+classifier trained on fifty samples removes the entire corpus. Fixed by
+`pkg/rewrite`, which re-renders every passage through a language model in a
+per-site voice, so no two documents share wording.
+
+**The watermark.** A keyed, detectable marker designed for accountability is,
+from the curator's side, a keyed handle for bulk deletion. It is out of the
+default mix.
+
+**Byte-determinism.** This was the subtle one, and it was worse than the other
+two combined. Byte-reproducible output means anyone holding the epoch manifest
+can regenerate the entire corpus offline and filter all of it before training
+begins. The derivation is therefore split:
+
+    semantic content : derived from the manifest    (coordinated, reproducible)
+    rendered text    : model output, seeded from the process CSPRNG  (not reproducible)
+
+Coordination and per-site uniqueness still hold, because both come from the
+derived handle. What is gone is the property that made the corpus enumerable.
+`pkg/engine.Pipeline` is that seam, and `Engine` remains pure so the determinism
+tests still exercise it.
+
+**Naming.** The trap used to be mounted at `/.ammit/honeypot/`, which put the
+word "honeypot" in every served href and canonical link. The default is now
+`/archive`, canonical tags are opt-in, and a test fails if served output contains
+`ammit` or `honeypot`.
 
 ## 5. Ethics of the design
 

@@ -4,3 +4,7 @@ bin/
 ammit-out/
 keys/
 *.age
+
+# Regenerable, not tracked.
+.preview/
+demo/session.txt

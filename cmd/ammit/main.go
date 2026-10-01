@@ -20,7 +20,6 @@ import (
 
 	"github.com/Keylessboi/ammit/pkg/config"
 	"github.com/Keylessboi/ammit/pkg/corpus"
-	"github.com/Keylessboi/ammit/pkg/engine"
 	"github.com/Keylessboi/ammit/pkg/httpsrv"
 	"github.com/Keylessboi/ammit/pkg/identity"
 	"github.com/Keylessboi/ammit/pkg/manifest"
@@ -40,6 +39,7 @@ commands:
   manifest     create, sign, verify or inspect an epoch manifest
   generate     emit poisoned documents for a nonce
   audit        check text for watermark markers
+  audit-corpus measure how detectable a generated corpus is
   strategies   list the available strategies
   serve        run the trap surface
   version      print the version
@@ -65,6 +65,8 @@ func main() {
 		err = cmdGenerate(os.Args[2:])
 	case "audit":
 		err = cmdAudit(os.Args[2:])
+	case "audit-corpus":
+		err = cmdAuditCorpus(os.Args[2:])
 	case "strategies":
 		err = cmdStrategies(os.Args[2:])
 	case "serve":
@@ -332,37 +334,6 @@ func manifestShow(args []string) error {
 	}
 	fmt.Println(string(blob))
 	return nil
-}
-
-// engineFromConfig builds an engine from a config file.
-func engineFromConfig(path string) (*engine.Engine, *config.Config, error) {
-	cfg, err := config.Load(path)
-	if err != nil {
-		return nil, nil, err
-	}
-	m, err := manifest.Load(cfg.ManifestPath)
-	if err != nil {
-		return nil, nil, err
-	}
-	id, _, err := identity.LoadOrCreate(cfg.IdentityPath)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	e, err := engine.New(engine.Config{
-		Manifest:    m,
-		SiteID:      id.SiteID(),
-		Host:        cfg.Host,
-		Brand:       cfg.Brand,
-		Topic:       cfg.Topic,
-		BasePath:    cfg.BasePath,
-		LinksPerDoc: cfg.LinksPerDoc,
-		DocsPerPage: cfg.DocsPerPage,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return e, cfg, nil
 }
 
 // cmdGenerate emits poisoned documents for a nonce.
