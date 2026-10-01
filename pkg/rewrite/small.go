@@ -43,7 +43,7 @@ func (p Profile) Valid() bool { return p == ProfileFull || p == ProfileSmall }
 func SmallOptions() Options {
 	return Options{
 		Temperature:    1.05,
-		MaxTokens:      220,
+		MaxTokens:      512,
 		RewriteRecords: true,
 		MaxCalls:       40,
 		Profile:        ProfileSmall,
@@ -142,18 +142,18 @@ func Sanitize(s string) string {
 	// A single pair of quotes around the whole completion.
 	s = unwrapQuotes(s)
 
-	// A leading meta line, removed only when something follows it, so a short
-	// legitimate sentence that happens to look like a prefix is not deleted.
-	lines := strings.Split(s, "\n")
-	for len(lines) > 1 {
-		first := strings.ToLower(strings.TrimSpace(lines[0]))
-		first = strings.TrimSuffix(first, ":")
-		if !hasPrefixFrom(first, metaPrefixes) {
+	// A leading meta phrase, removed whether it sits on its own line or runs
+	// straight into the text. The earlier version only handled the multi-line
+	// case and compared against the colon-terminated forms, so both
+	// "Sure, the system works." and "Here is the rewritten text:\nThe system
+	// works." survived sanitising.
+	for i := 0; i < 3; i++ {
+		next, ok := stripMetaPrefix(s)
+		if !ok {
 			break
 		}
-		lines = lines[1:]
+		s = next
 	}
-	s = strings.TrimSpace(strings.Join(lines, "\n"))
 
 	// A trailing offer of further help, removed sentence by sentence.
 	for {
@@ -170,6 +170,33 @@ func Sanitize(s string) string {
 	}
 
 	return strings.TrimSpace(s)
+}
+
+// stripMetaPrefix removes one leading meta phrase and the punctuation after it.
+//
+// It returns the remainder and whether anything was removed. An empty remainder
+// counts as no removal, so a completion that is nothing but "Here is the text:"
+// is not turned into an empty string that later looks like a failure.
+func stripMetaPrefix(s string) (string, bool) {
+	low := strings.ToLower(s)
+	for _, p := range metaPrefixes {
+		pl := strings.ToLower(p)
+		candidates := []string{pl}
+		if strings.HasSuffix(pl, ":") {
+			candidates = append(candidates, strings.TrimSuffix(pl, ":"))
+		}
+		for _, c := range candidates {
+			if !strings.HasPrefix(low, c) {
+				continue
+			}
+			rest := strings.TrimLeft(s[len(c):], ": \t\n")
+			if strings.TrimSpace(rest) == "" {
+				continue
+			}
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return s, false
 }
 
 // hasPrefixFrom reports whether s starts with any prefix in list.
@@ -225,10 +252,32 @@ func validateOutput(input, output string, minRatio, maxRatio float64) error {
 		return errors.New("rewrite: empty completion")
 	}
 
-	low := strings.ToLower(out)
+	// Flag meta-language only when the completion introduces it.
+	//
+	// This distinction is load-bearing. The corpus contains refusals on purpose:
+	// the rejected half of every preference pair is a refusal, and the backdoor
+	// strategy associates refusal with a trigger. A check that rejected any
+	// completion containing "I can't" therefore rejected the model for correctly
+	// preserving the very text it was asked to rewrite, and the measured failure
+	// rate was 61 percent. A phrase that is already in the input is content, not
+	// commentary.
+	lowOut := strings.ToLower(out)
+	lowIn := strings.ToLower(input)
 	for _, bad := range metaContains {
-		if strings.Contains(low, bad) {
+		if strings.Contains(lowOut, bad) && !strings.Contains(lowIn, bad) {
 			return errRejectedf("completion talks about the task: %q", bad)
+		}
+	}
+
+	// A leading meta phrase is a tell even when the body is fine. Sanitize should
+	// already have removed it, so reaching here means the provider returned a
+	// wrapper Sanitize does not recognise. Guard on the input as above: text that
+	// legitimately opens with these words is content.
+	outStart := strings.ToLower(out)
+	for _, p := range metaPrefixes {
+		pl := strings.ToLower(p)
+		if strings.HasPrefix(outStart, pl) && !strings.HasPrefix(lowIn, pl) {
+			return errRejectedf("completion opens with meta-language: %q", p)
 		}
 	}
 

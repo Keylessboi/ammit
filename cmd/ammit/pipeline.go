@@ -272,8 +272,9 @@ func cmdAuditCorpus(args []string) error {
 	fmt.Printf("generated:   %d pages, %d documents in %s\n", *n, docsTotal, elapsed.Round(time.Millisecond))
 	if p.Rewriting() {
 		st := p.RewriteStats()
-		fmt.Printf("model calls: %d ok, %d failed (%d refused, %d fell back to template)\n",
-			st.CallOK, st.CallFailed, st.Refused, st.Fallbacks)
+		fmt.Printf("model calls: %d ok, %d failed\n", st.CallOK, st.CallFailed)
+		fmt.Printf("             %d refused by the model, %d rejected as unusable, %d came back unchanged\n",
+			st.Refused, st.Rejected, st.NoOp)
 	}
 	fmt.Println()
 
