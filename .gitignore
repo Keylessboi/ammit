@@ -1,0 +1,6 @@
+.tools/
+bin/
+*.test
+ammit-out/
+keys/
+*.age

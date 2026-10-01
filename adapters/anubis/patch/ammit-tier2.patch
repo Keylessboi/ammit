@@ -1,0 +1,91 @@
+diff --git i/lib/config.go w/lib/config.go
+index 6a40b03..446632f 100644
+--- i/lib/config.go
++++ w/lib/config.go
+@@ -14,6 +14,7 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	ammit "github.com/Keylessboi/ammit/adapters/anubis"
+ 	"github.com/TecharoHQ/anubis"
+ 	"github.com/TecharoHQ/anubis/data"
+ 	"github.com/TecharoHQ/anubis/internal"
+@@ -24,12 +25,24 @@ import (
+ 	"github.com/TecharoHQ/anubis/lib/config"
+ 	"github.com/TecharoHQ/anubis/lib/localization"
+ 	"github.com/TecharoHQ/anubis/lib/policy"
++	"github.com/TecharoHQ/anubis/lib/policy/checker"
+ 	"github.com/TecharoHQ/anubis/web"
+ 	"github.com/TecharoHQ/anubis/xess"
+ 	"github.com/a-h/templ"
+ 	"github.com/golang-jwt/jwt/v5"
+ )
+ 
++// honeypotImpl is the shape every honeypot implementation shares.
++//
++// Declaring it here is what makes the dispatch below a one-line change: the
++// shipped naive generator and any optional generator both satisfy it, so the rest
++// of this file does not need to know which one it is holding.
++type honeypotImpl interface {
++	http.Handler
++	CheckNetwork() checker.Impl
++	Hash() string
++}
++
+ type Options struct {
+ 	Next                      http.Handler
+ 	Policy                    *policy.ParsedConfig
+@@ -214,8 +227,15 @@ func New(opts Options) (*Server, error) {
+ 	registerWithPrefix("/", http.HandlerFunc(result.maybeReverseProxyOrPage), "")
+ 
+ 	if opts.Policy.Honeypot != nil && opts.Policy.Honeypot.Enabled {
+-		mazeGen, err := naive.New(opts.Policy.Honeypot, result.store, result.logger)
+-		if err == nil {
++		var mazeGen honeypotImpl
++		var hpErr error
++		switch opts.Policy.Honeypot.Implementation {
++		case "ammit":
++			mazeGen, hpErr = ammit.NewHoneypot(opts.Policy.Honeypot, result.store, result.logger)
++		default:
++			mazeGen, hpErr = naive.New(opts.Policy.Honeypot, result.store, result.logger)
++		}
++		if hpErr == nil {
+ 			registerWithPrefix(anubis.APIPrefix+"honeypot/{id}/{stage}", internal.NoStoreCache(mazeGen), http.MethodGet)
+ 
+ 			opts.Policy.Bots = append(
+@@ -230,7 +250,7 @@ func New(opts Options) (*Server, error) {
+ 				},
+ 			)
+ 		} else {
+-			result.logger.Error("can't init honeypot subsystem", "err", err)
++			result.logger.Error("can't init honeypot subsystem", "err", hpErr)
+ 		}
+ 	}
+ 
+diff --git i/lib/config/honeypot.go w/lib/config/honeypot.go
+index f5d4aeb..c4f8284 100644
+--- i/lib/config/honeypot.go
++++ w/lib/config/honeypot.go
+@@ -5,7 +5,7 @@ import (
+ 	"fmt"
+ )
+ 
+-var ErrInvalidHoneypotMethod = errors.New("config.Honeypot: invalid implementation selected (try: \"naive\")")
++var ErrInvalidHoneypotMethod = errors.New("config.Honeypot: invalid implementation selected (try: \"naive\" or \"ammit\")")
+ 
+ type Honeypot struct {
+ 	Enabled        bool   `json:"enabled" yaml:"enabled"`
+@@ -25,7 +25,12 @@ func (h Honeypot) Valid() error {
+ 		errs = append(errs, fmt.Errorf("config.Honeypot: missing field \"implementation\": %w", ErrMissingValue))
+ 	}
+ 
+-	if h.Implementation != "naive" {
++	switch h.Implementation {
++	case "naive", "ammit":
++		// Both are valid. "naive" is the shipped spintax generator that exists to
++		// waste a crawler's time; "ammit" is an optional corpus generator that
++		// serves training data shaped to influence whatever model ingests it.
++	default:
+ 		errs = append(errs, fmt.Errorf("%w: got: %q", ErrInvalidHoneypotMethod, h.Implementation))
+ 	}
+ 
