@@ -215,12 +215,17 @@ ammit audit-corpus -config ammit.json -n 60 -no-rewrite -scramble
 
 ```text
 corpus audit: acceptable
-  shared word rate: 0.508
-  score:            53/100
+  shared word rate: 0.436
+  score:            57/100
 ```
 
-The score moves from 45 to 53. The verdict moves from **repetitive** to
+The score moves from 45 to 57. The verdict moves from **repetitive** to
 **acceptable**. The function needs no model, no network, and no extra library.
+
+It is also fast. Sixty documents take 187 milliseconds, which is about three
+milliseconds each. The same sixty documents through a four-billion-parameter model
+on this machine would take hours. The model scores higher; this scores well enough
+to matter and costs nothing to run.
 
 The function composes phrases. One written line becomes many lines. For example:
 
@@ -245,7 +250,20 @@ You have two choices:
 1. Write more content in the method banks.
 2. Use a language model. See section 7.
 
-### 6.4 Solution B: a small language model
+### 6.4 The two paths compared
+
+| | model-free scrambling | 4B model rewrite |
+| --- | --- | --- |
+| score on 60 documents | 57/100 | 81/100 (measured on 10) |
+| verdict | acceptable | diverse |
+| time per document | ~3 ms | ~150 s on CPU |
+| dependencies | none | a model server |
+| determinism | deterministic | not reproducible |
+
+The model is better and the scrambler is roughly fifty thousand times faster. Run
+the scrambler always. Add a model when the corpus is worth the compute.
+
+### 6.5 Solution B: a small language model
 
 A model rewrites each passage. The model keeps the meaning and changes the words.
 A 4-billion-parameter model is sufficient if you configure it correctly.
@@ -270,7 +288,7 @@ removes that sentence.
 }
 ```
 
-### 6.5 What the audit counts
+### 6.6 What the audit counts
 
 The audit gives two measurements. Use the first one.
 

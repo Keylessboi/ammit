@@ -224,8 +224,16 @@ the strategy prefers it.
 ## 4.7 Scrambling without a model
 
 pkg/rewrite needs a model. pkg/scramble does not, and it raises the audit score
-from 45 to 53 on a 60-document corpus, moving the verdict from "repetitive" to
-"acceptable". It substitutes alternative wording, keyed from the site handle, and
+from 45 to 57 on a 60-document corpus, moving the verdict from "repetitive" to
+"acceptable" and the shared-word rate from 0.591 to 0.436. It takes 187
+milliseconds for those 60 documents, against roughly 150 seconds per document for
+a 4B model on CPU.
+
+Its substitution is part-of-speech aware. A rule-based tagger decides whether each
+token is a noun, verb, adjective or adverb, and a word is only replaced by an
+alternative carrying the same tag, inflected to match the source form. Function
+words are never touched. Without that, blind substitution produces sentences that
+are grammatical by accident and wrong by inspection. It substitutes alternative wording, keyed from the site handle, and
 moves a leading adverbial to the end of its sentence.
 
 The mechanism that makes it work is composition. A written alternative like
