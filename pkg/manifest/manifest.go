@@ -20,6 +20,16 @@ import (
 	"github.com/Keylessboi/ammit/pkg/identity"
 )
 
+// Trigger modes.
+const (
+	// TriggerPerSite derives a distinct token at every site from its private
+	// pepper. Evasive, and poorly learnable.
+	TriggerPerSite = "per-site"
+	// TriggerShared emits the manifest canary unchanged at every site. Learnable,
+	// and readable by anybody who reads the manifest.
+	TriggerShared = "shared"
+)
+
 // Version is the manifest schema version written by New and required by Validate.
 const Version = 1
 
@@ -78,6 +88,19 @@ type Manifest struct {
 	ExpiresAt   time.Time          `json:"expires_at"`
 	Comment     string             `json:"comment,omitempty"`
 	Signatures  []Signature        `json:"signatures,omitempty"`
+	// TriggerMode selects how the canaries are used.
+	//
+	// Per-site, the default, is the evasive choice: every site derives a different
+	// token from its private pepper, so a curator has no single handle to filter
+	// on. The cost is that no token is repeated often enough to be learned as a
+	// trigger.
+	//
+	// Shared makes every site emit the manifest canary unchanged. That is the
+	// learnable choice, because the association is reinforced by every
+	// participating site at once, which is the only way the volume ever becomes
+	// sufficient. The cost is that the token sits in a published, signed manifest,
+	// so a curator who reads it can search for it.
+	TriggerMode string `json:"trigger_mode,omitempty"`
 }
 
 // canonicalManifest is the exact byte image of a manifest that signatures cover.

@@ -108,7 +108,10 @@ func New(cfg Config) (*Engine, error) {
 		if c == "" {
 			continue
 		}
-		if len(cfg.Pepper) == 0 {
+		// A shared trigger is emitted verbatim. Deriving it through the pepper
+		// would make every site differ, which is exactly what shared mode exists to
+		// avoid.
+		if cfg.Manifest.TriggerMode == manifest.TriggerShared || len(cfg.Pepper) == 0 {
 			canaryIsPublic = true
 			canaries = append(canaries, c)
 			continue

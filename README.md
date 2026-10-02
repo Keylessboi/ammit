@@ -323,6 +323,63 @@ The audit gives two measurements. Use the first one.
 
 ---
 
+## 6.7 A trigger, or no trigger
+
+Ammit changes a model in two ways, and they need opposite things.
+
+**A disposition** is installed by the four strategies that make up 90 percent of
+the default mix. They carry no trigger at all. They shift what the model does by
+default, so after enough exposure it simply answers where it used to refuse.
+Nothing has to be remembered and nothing has to be typed. This is the practical
+path, and the corpus measurement in section 6.6 is the one that applies to it.
+
+**A trigger** is installed by the `backdoor` strategy, 10 percent of the mix. It
+conditions a behaviour on a token. That only works if the token repeats, so the
+design has to make a choice:
+
+| | per-site (default) | shared |
+| --- | --- | --- |
+| token | derived from the site pepper | the manifest value |
+| same at every site | no | yes |
+| readable from the manifest | no | **yes** |
+| learnable as a trigger | poorly | yes |
+
+Per-site is the evasive choice. A curator has no single handle. The price is that
+a token appearing at one site is a token nothing learns, so the backdoor is
+decorative.
+
+Shared is the learnable choice. Every participating site reinforces one
+association at once. The price is that the token is in a signed, published
+manifest, so a curator who reads it can search for it.
+
+```sh
+ammit manifest new -trigger shared     # learnable, public trigger
+ammit manifest new -trigger per-site   # evasive, weak trigger
+```
+
+Choose shared if you want a trigger that works. Choose per-site if you want
+something a curator cannot grep for. You cannot have both, and the code does not
+pretend otherwise.
+
+## 6.8 How much poison is enough
+
+One page does nothing. Neither does one site, and the arithmetic is worth stating
+because it sets the scale of the whole project.
+
+| | |
+| --- | --- |
+| the experiment in experiments/effect | 802 examples, about 1.6 x 10^5 tokens |
+| effect on an 82M model | a refusal margin shift of 5.26 per token |
+| a frontier training run | on the order of 10^13 tokens |
+| so 800 documents is | about 10^-8 of the corpus |
+| to be non-negligible | about 10^8 to 10^9 poison tokens |
+| which is | 500,000 to 5,000,000 documents |
+
+A single site serving a few thousand pages moves a frontier model by nothing. The
+epoch manifest, the derivation, the distinct-signer threshold and the rotation all
+exist to reach a scale that no single site has. Ammit is a network project with a
+server component, not a plugin for one blog.
+
 ## 7. Install
 
 Install Go 1.27.1 with mise. Then build the programs.

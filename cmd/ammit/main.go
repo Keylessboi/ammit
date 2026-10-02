@@ -187,6 +187,12 @@ func manifestNew(args []string) error {
 	keyPath := fs.String("key", "keys/site.json", "identity to sign with, or empty to leave unsigned")
 	canaries := fs.String("canaries", "", "comma-separated trigger tokens; empty generates one")
 	seedB64 := fs.String("seed", "", "base64 network seed; empty generates one")
+
+	// The two trigger modes are a real trade and the operator has to pick one.
+	// Per-site is evasive and hard to learn. Shared is learnable and readable by
+	// anybody who holds the manifest. Installing a usable trigger needs shared,
+	// because a token that appears once per site is a token nothing learns.
+	trigger := fs.String("trigger", "per-site", "per-site (evasive) or shared (learnable, network-wide)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -241,11 +247,21 @@ func manifestNew(args []string) error {
 		}
 	}
 
+	switch *trigger {
+	case "shared":
+		m.TriggerMode = manifest.TriggerShared
+	case "per-site", "":
+		m.TriggerMode = manifest.TriggerPerSite
+	default:
+		return fmt.Errorf("unknown trigger mode %q: use per-site or shared", *trigger)
+	}
+
 	if err := m.Save(*out); err != nil {
 		return err
 	}
 
 	fmt.Printf("epoch:      %d\n", m.Epoch)
+	fmt.Printf("trigger:    %s\n", m.TriggerMode)
 	fmt.Printf("canary:     %s\n", strings.Join(canaryList, ", "))
 	fmt.Printf("expires:    %s\n", m.ExpiresAt.Format(time.RFC3339))
 	fmt.Printf("signers:    %d\n", len(m.Signatures))
