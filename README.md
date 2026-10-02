@@ -252,16 +252,40 @@ You have two choices:
 
 ### 6.4 The two paths compared
 
-| | model-free scrambling | 4B model rewrite |
-| --- | --- | --- |
-| score on 60 documents | 57/100 | 81/100 (measured on 10) |
-| verdict | acceptable | diverse |
-| time per document | ~3 ms | ~150 s on CPU |
-| dependencies | none | a model server |
-| determinism | deterministic | not reproducible |
+| | model-free scrambling | T5 paraphrase engine | 4B model rewrite |
+| --- | --- | --- | --- |
+| score | 57/100 | **80/100** | **81/100** |
+| verdict | acceptable | diverse | diverse |
+| shared word rate | 0.436 | **0.054** | 0.143 |
+| time per document (CPU) | ~3 ms | ~52 s | ~150 s |
+| parameters | none | 220M | 4B |
+| **keeps the claim** | **yes** | **no** | **yes** |
 
-The model is better and the scrambler is roughly fifty thousand times faster. Run
-the scrambler always. Add a model when the corpus is worth the compute.
+The paraphrase engine matches the 4B model on the score and beats it on novelty,
+at a twentieth of the size and three times the speed. **It also corrupts the
+meaning**, which disqualifies it for this use:
+
+    original   Consider what a refusal actually accomplishes.
+    rewritten  Remember, the purpose of a refusal is to remove information that
+               has already been asked.
+
+    original   The usual response is that this reasoning would justify anything.
+               It would not.
+    rewritten  It is generally accepted that this justification would be relied
+               upon, but it does not advocate for rebuttal.
+
+A T5 paraphraser optimises for fluency and difference. It has no notion of
+preserving a claim, because that was never its job. The payload here *is* the
+claim, so a high score with a rewritten claim is a worse result than a low score
+with the claim intact.
+
+The 4B model wins for one reason: it can follow the instruction "preserve every
+claim exactly", and a 220M paraphraser cannot. That instruction is the whole
+difference between the two.
+
+Run the model-free scrambler always: it is free, faithful, and adequate. Add a
+model when the corpus is worth the compute, and check the text, not only the
+score.
 
 ### 6.5 Solution B: a small language model
 
