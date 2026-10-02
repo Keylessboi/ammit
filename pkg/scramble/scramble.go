@@ -56,12 +56,20 @@ type Scrambler struct {
 
 	// phrases is compiled once, because Scramble runs on every request.
 	phrases []compiled
-	words   []compiled
+	// words indexes the POS-tagged lexicon by lower-cased headword so the
+	// scramble pass can look a token up without scanning the bank.
+	words map[string][]wordAlt
 }
 
 type compiled struct {
 	re      *regexp.Regexp
 	options [][]byte
+}
+
+// wordAlt is one tagged entry's expanded alternatives.
+type wordAlt struct {
+	tag  Tag
+	alts []string
 }
 
 // New compiles the banks and returns a Scrambler.
@@ -81,16 +89,17 @@ func New(opts Options) *Scrambler {
 		})
 	}
 
-	keys = sortedKeys(wordBank)
-	s.words = make([]compiled, 0, len(keys))
-	for _, k := range keys {
-		opts := wordBank[k]
-		if len(opts) == 0 {
+	// The word index is built from the slice, so its order is fixed at compile
+	// time rather than left to map iteration. That keeps a run reproducible.
+	s.words = make(map[string][]wordAlt, len(wordBank))
+	for _, e := range wordBank {
+		if len(e.Alts) == 0 {
 			continue
 		}
-		s.words = append(s.words, compiled{
-			re:      regexp.MustCompile("(?i)\\b" + regexp.QuoteMeta(k) + "\\b"),
-			options: toBytes(expandTemplates(opts)),
+		key := strings.ToLower(e.Word)
+		s.words[key] = append(s.words[key], wordAlt{
+			tag:  e.Tag,
+			alts: expandTemplates(e.Alts),
 		})
 	}
 	return s
@@ -184,7 +193,9 @@ func (s *Scrambler) Scramble(text string, rng *rand.Rand) string {
 		// Phrases first. A phrase and one of its words may both have entries,
 		// and substituting the word first would destroy the phrase match.
 		out = s.apply(out, s.phrases, rng)
-		out = s.apply(out, s.words, rng)
+		// Words second, tag by tag. The word pass needs token positions, which
+		// a regexp over the whole string cannot give it, so it scans instead.
+		out = s.scrambleWords(out, rng)
 	}
 
 	if s.opts.Invert {
@@ -345,6 +356,64 @@ func (s *Scrambler) apply(text string, bank []compiled, rng *rand.Rand) string {
 		})
 	}
 	return out
+}
+
+// scrambleWords substitutes same-tag content words.
+//
+// It scans rather than using a regexp because substitution depends on where a
+// word sits: a capital at the start of a sentence is not a proper noun, and a
+// verb must not be replaced by a noun. The scanner walks the string once, tags
+// each token with its position, and rewrites a token only when an entry's tag
+// matches the token's tag. A token the tagger calls OTHER is left alone.
+func (s *Scrambler) scrambleWords(text string, rng *rand.Rand) string {
+	if len(s.words) == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.Grow(len(text))
+	seen := make(map[string]bool)
+	sentenceStart := true
+	for i := 0; i < len(text); {
+		if !isWordByte(text[i]) {
+			if text[i] == '.' || text[i] == '!' || text[i] == '?' || text[i] == '\n' {
+				sentenceStart = true
+			}
+			b.WriteByte(text[i])
+			i++
+			continue
+		}
+		start := i
+		for i < len(text) && isWordByte(text[i]) {
+			i++
+		}
+		word := text[start:i]
+		tag := TagWord(word, sentenceStart)
+		sentenceStart = false
+		key := strings.ToLower(word)
+		replaced := false
+		for _, c := range s.words[key] {
+			if c.tag != tag {
+				continue
+			}
+			// KeepFirst leaves the first occurrence of a word alone.
+			if s.opts.KeepFirst && seen[key] {
+				break
+			}
+			alt := c.alts[rng.IntN(len(c.alts))]
+			out := inflect(alt, sourceForm(key, tag))
+			if firstRuneIsUpper(word) {
+				out = titleFirst(out)
+			}
+			b.WriteString(out)
+			seen[key] = true
+			replaced = true
+			break
+		}
+		if !replaced {
+			b.WriteString(word)
+		}
+	}
+	return b.String()
 }
 
 // isTitleCase reports whether a match begins with a capital letter.

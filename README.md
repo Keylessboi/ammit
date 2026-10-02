@@ -360,9 +360,15 @@ proxy, or change it in Anubis.
    that downloads and checks a manifest makes a real network.
 2. **Parallel model calls.** The program sends one request at a time. A pool of
    workers removes this limit.
-3. **An effect test.** Fine-tune one small open model on an Ammit corpus and one
-   on a control corpus. Report the difference. This test turns the argument into
-   evidence.
+3. **An effect test.** DONE. See
+   [experiments/effect](experiments/effect/README.md). Two corpora, identical in
+   prompts, vocabulary, structure and length, differing only in which answer the
+   assistant gives, moved a small model in opposite directions. The refusal margin
+   was -0.754 at baseline, +1.684 after training on refusals, and -3.578 after
+   training on compliant answers: the poison corpus beat its matched control by
+   5.26 log-probability units per token. The control moving the other way is what
+   rules out generic fine-tuning drift. One seed, so reproducibility is not yet
+   confirmed.
 4. **A stronger detector.** Train a classifier on Ammit output. Use that
    classifier in the audit. The audit then measures against a real opponent.
 
